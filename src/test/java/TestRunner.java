@@ -4,8 +4,10 @@ import io.cucumber.junit.CucumberOptions;
 
 @RunWith(Cucumber.class)
 @CucumberOptions(
-        features = "Feature"
-        ,glue={"stepdefs"}
+        features = "src/test/resources/features",
+        glue = {"steps"},
+        strict=true,
+        plugin = {"pretty", "html:target/reports/html" , "junit:target/reports/junit/cucumber.xml"}
 )
 
 public class TestRunner {

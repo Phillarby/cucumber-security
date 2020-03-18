@@ -21,7 +21,7 @@ public class Client {
         this.apiPort = apiPort;
         this.apiPath = apiPath;
 
-        clientApi = new ClientApi(String.format("%s://%s", apiProtocol, apiHost), apiPort, apiKey);
+        clientApi = new ClientApi(String.format(apiHost), apiPort, apiKey);
     }
 
     public String getApiKey() {

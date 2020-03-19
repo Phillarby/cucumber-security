@@ -26,6 +26,14 @@ public class ScenarioState {
         return (Integer)state.get(key);
     }
 
+    public boolean hasKey(String key) {
+        return state.containsKey(key);
+    }
+
+    public boolean getBoolean(String key) {
+        return (Boolean)state.get(key);
+    }
+
     public String getString(String key) {
         return (String)state.get(key);
     }

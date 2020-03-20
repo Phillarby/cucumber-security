@@ -1,4 +1,4 @@
-package steps;
+package utils;
 
 import java.util.Map;
 
@@ -8,11 +8,11 @@ import java.util.Map;
  * state leaking between scenarios
  *
  */
-public class ScenarioState {
+public class StateContainer {
 
     private Map state;
 
-    public ScenarioState () {
+    public StateContainer() {
         state = new java.util.HashMap<String, Object>();
     }
 
@@ -34,5 +34,9 @@ public class ScenarioState {
 
     public String getString(String key) {
         return (String)state.get(key);
+    }
+
+    public Object getObject(String key) {
+        return state.get(key);
     }
 }

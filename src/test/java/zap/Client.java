@@ -1,67 +1,29 @@
 package zap;
 
 import org.zaproxy.clientapi.core.ClientApi;
+import utils.Constants;
 
-import java.net.MalformedURLException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
 
 public class Client {
 
     private ClientApi clientApi;
 
-    private String apiKey = Utils.EMPTY_STRING;;
-    private String apiProtocol = Utils.EMPTY_STRING;;
-    private String apiHost = Utils.EMPTY_STRING;;
-    private int apiPort = 0;
-    private String apiPath = Utils.EMPTY_STRING;
+    public Client() throws IOException {
 
-    public Client(String apiKey, String apiProtocol, String apiHost, int apiPort, String apiPath) throws MalformedURLException {
-        this.apiKey = apiKey;
-        this.apiProtocol = apiProtocol;
-        this.apiHost = apiHost;
-        this.apiPort = apiPort;
-        this.apiPath = apiPath;
+        //load API configuration from properties file
+        Properties clientApiProperties = new Properties();
+        String zapPropertiesFile = "zap.properties";
+        InputStream zapProperties = Client.class.getClassLoader().getResource(zapPropertiesFile).openStream();
+        clientApiProperties.load(zapProperties);
 
-        clientApi = new ClientApi(String.format(apiHost), apiPort, apiKey);
-    }
+        String apiKey = clientApiProperties.getProperty("apiKey");
+        String apiHost = clientApiProperties.getProperty("apiHost");
+        int apiPort = Integer.parseInt(clientApiProperties.getProperty("apiPort"));
 
-    public String getApiKey() {
-        return apiKey;
-    }
-
-    public void setApiKey(String apiKey) {
-        this.apiKey = apiKey;
-    }
-
-    public String getApiProtocol() {
-        return apiProtocol;
-    }
-
-    public void setApiProtocol(String apiProtocol) {
-        this.apiProtocol = apiProtocol;
-    }
-
-    public String getApiHost() {
-        return apiHost;
-    }
-
-    public void setApiHost(String apiHost) {
-        this.apiHost = apiHost;
-    }
-
-    public int getApiPort() {
-        return apiPort;
-    }
-
-    public void setApiPort(int apiPort) {
-        this.apiPort = apiPort;
-    }
-
-    public String getApiPath() {
-        return apiPath;
-    }
-
-    public void setApiPath(String apiPath) {
-        this.apiPath = apiPath;
+        clientApi = new ClientApi(apiHost, apiPort, apiKey);
     }
 
     public ClientApi getApiClient() {

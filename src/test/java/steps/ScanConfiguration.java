@@ -9,8 +9,9 @@ import org.slf4j.LoggerFactory;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import org.zaproxy.clientapi.core.*;
+import utils.Constants;
+import utils.StateContainer;
 import zap.Client;
-import zap.ClientBuilder;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -19,30 +20,17 @@ import java.net.MalformedURLException;
 
 public class ScanConfiguration {
 
-    private static String ZAP_PROTOCOL = "http";
-    private static String ZAP_ADDRESS = "localhost";
-    private static int ZAP_PORT = 8080;
-    private static String ZAP_API_KEY = "qwerty";
-
-    private ScenarioState state;
+    private StateContainer scenarioState;
     private ClientApi zap;
 
     Logger logger = LoggerFactory.getLogger(ScanConfiguration.class);
 
     //PicoContainer will automatically inject an instance of a state object
     //relevant to the scenario being executed
-    public ScanConfiguration(ScenarioState state) throws MalformedURLException {
+    public ScanConfiguration(StateContainer scenarioState) throws MalformedURLException {
         logger.debug("ScanConfiguration constructed");
-        this.state = state;
-
-        Client zapClient = new ClientBuilder()
-                .setApiProtocol(ZAP_PROTOCOL)
-                .setApiHost(ZAP_ADDRESS)
-                .setApiPort(ZAP_PORT)
-                .setApiKey(ZAP_API_KEY)
-                .build();
-
-        zap = zapClient.getApiClient();
+        this.scenarioState = scenarioState;
+        zap = (ClientApi)Constants.GLOBAL_STATE.getObject("zap");
     }
 
     // Define a risk parameter
@@ -56,7 +44,7 @@ public class ScanConfiguration {
     public void TestSpiderSpecifiedUrl(String url) throws InterruptedException, ClientApiException {
 
         String stateKey = String.format("spider %s", url);
-        if (!state.hasKey(stateKey) || !state.getBoolean(stateKey)) {
+        if (!scenarioState.hasKey(stateKey) || !scenarioState.getBoolean(stateKey)) {
             SpiderSpecifiedUrl(url);
         }
     }
@@ -73,7 +61,7 @@ public class ScanConfiguration {
         String scanid = ((ApiResponseElement)resp).getValue();
         logger.debug("ZAP spider running with scan id {}", scanid);
         logger.debug("Polling spider progress every {} milliseconds", progressPollRate);
-        state.add("scanid", scanid);
+        scenarioState.add("scanid", scanid);
 
         // Poll the status until the spider completes
         while (progress < 100) {
@@ -82,9 +70,9 @@ public class ScanConfiguration {
             logger.debug("Spider progress {}%", progress);
         }
         logger.debug("Spider complete");
-        state.add(String.format("spider %s", url), true);
+        scenarioState.add(String.format("spider %s", url), true);
 
-        ApiResponse response = zap.spider.results(state.getString("scanid"));
+        ApiResponse response = zap.spider.results(scenarioState.getString("scanid"));
         logger.debug("Spider found {} pages", ((ApiResponseList)(response)).getItems().size() );
 
         logger.debug("Waiting for passive scan to complete");
@@ -96,7 +84,7 @@ public class ScanConfiguration {
             if (lastpoll != scanRemaining) logger.debug("{} pages remaining to scan", scanRemaining);
         }
         logger.debug("passive scan complete");
-        state.add(String.format("passive %s", url), true);
+        scenarioState.add(String.format("passive %s", url), true);
     }
 
     @When("I get the results")
@@ -108,10 +96,10 @@ public class ScanConfiguration {
         int low = Integer.parseInt(alertCountsByRisk.getValue("Low").toString());
         int informational = Integer.parseInt(alertCountsByRisk.getValue("Informational").toString());
         
-        state.add("pscanHigh", high);
-        state.add("pscanMedium", medium);
-        state.add("pscanLow", low);
-        state.add("pscanInformational", informational);
+        scenarioState.add("pscanHigh", high);
+        scenarioState.add("pscanMedium", medium);
+        scenarioState.add("pscanLow", low);
+        scenarioState.add("pscanInformational", informational);
     }
 
     @Then("there are/is {int} {word} risk alert(s)")
@@ -120,16 +108,16 @@ public class ScanConfiguration {
         int alerts;
         switch(risk.toLowerCase()) {
             case "high":
-                alerts = state.getInt("pscanHigh");
+                alerts = scenarioState.getInt("pscanHigh");
                 break;
             case "medium":
-                alerts = state.getInt("pscanMedium");
+                alerts = scenarioState.getInt("pscanMedium");
                 break;
             case "low":
-                alerts = state.getInt("pscanLow");
+                alerts = scenarioState.getInt("pscanLow");
                 break;
             case "informational":
-                alerts = state.getInt("pscanInformational");
+                alerts = scenarioState.getInt("pscanInformational");
                 break;
             default:
                 String message = String.format("Invalid risk parameter specified: %s", risk);
@@ -156,6 +144,15 @@ public class ScanConfiguration {
     }
 
 
+    /**
+     * Initiates an active scan agains ta specified URL. This involves constructing intentionally malicious
+     * calls to identified potentially vulnerable pages and recored results.  Note this scan can take a long
+     * time to execute.
+     *
+     * @param url the URL to be scanned
+     * @throws ClientApiException
+     * @throws InterruptedException
+     */
     @And("I actively scan {string}")
     public void performActiveScan(String url) throws ClientApiException, InterruptedException {
 
@@ -171,5 +168,38 @@ public class ScanConfiguration {
         }
 
         logger.debug("Active scan complete");
+    }
+
+    /**
+     * Runs the AJAX spider against the specified URL. Follows this up by also running a standard
+     * spider and passive scan for full coverage
+     *
+     * @param url The URL to be scanned by the spider
+     * @throws ClientApiException
+     * @throws InterruptedException
+     */
+    @Given("I have ajax spidered and passively scanned {string}")
+    public void performAjaxSpider(String url) throws ClientApiException, InterruptedException {
+        logger.debug("Starting the ZAP spider for {}", url);
+        ApiResponse resp = zap.ajaxSpider.scan(url, null, null, null);
+
+        int progressPollRate = 1000;
+
+        // Get the identifier for the current scan
+        String scanid = ((ApiResponseElement)resp).getValue();
+        logger.debug("ZAP spider running with scan id {}", scanid);
+        logger.debug("Polling spider progress every {} milliseconds", progressPollRate);
+        scenarioState.add("scanid", scanid);
+
+        String spiderStatus;
+        while(!(spiderStatus = zap.ajaxSpider.status().toString()).equals("stopped")) {
+            Thread.sleep(progressPollRate);
+            logger.info("Ajax spider status: {}", spiderStatus);
+        }
+
+        logger.debug("Ajax spider completed. {} hits found", zap.ajaxSpider.numberOfResults());
+        logger.info("initiating standard spider scan to supplement ajax spider results");
+
+        TestSpiderSpecifiedUrl(url);
     }
 }

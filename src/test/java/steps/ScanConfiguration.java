@@ -64,11 +64,6 @@ public class ScanConfiguration {
 
     private void SpiderSpecifiedUrl(String url) throws ClientApiException, InterruptedException {
 
-        //logger.debug("Clearing any cached spider results for {}", url);
-        //zap.alert.deleteAllAlerts();
-        //zap.spider.removeAllScans();
-        //zap.core.deleteSiteNode(url,null,null);
-
         logger.debug("Starting the ZAP spider for {}", url);
         ApiResponse resp = zap.spider.scan(url, null, null, null, null);
 

@@ -11,7 +11,6 @@ import io.cucumber.java.en.Then;
 import org.zaproxy.clientapi.core.*;
 import utils.Constants;
 import utils.StateContainer;
-import zap.Client;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -26,41 +25,68 @@ public class ScanConfiguration {
     Logger logger = LoggerFactory.getLogger(ScanConfiguration.class);
 
     //PicoContainer will automatically inject an instance of a state object
-    //relevant to the scenario being executed
+    //relevant to the scenario being executed.  This can be used to persist state
+    //between steps.  There is a static global state object that can be used
+    //to persist required state between scenarios
     public ScanConfiguration(StateContainer scenarioState) throws MalformedURLException {
         logger.debug("ScanConfiguration constructed");
         this.scenarioState = scenarioState;
         zap = (ClientApi)Constants.GLOBAL_STATE.getObject("zap");
     }
 
-    // Define a risk parameter
-    @ParameterType("High|Medium|Low|Informational")
-    public String risk(String risk){
-        return risk;
-    }
-
-
+    /**
+     * Check if a URL has already had a standard spider run against it in the current execution.
+     * If it has then there should not be a need to re-run the spider as the pages will already
+     * be cached on teh ZAP server
+     * @param url the URL of the site to spider
+     * @throws InterruptedException
+     * @throws ClientApiException
+     */
     @Given("I have spidered and passively scanned {string}")
     public void TestSpiderSpecifiedUrl(String url) throws InterruptedException, ClientApiException {
 
-        String stateKey = String.format("spider %s", url);
-        if (!scenarioState.hasKey(stateKey) || !scenarioState.getBoolean(stateKey)) {
-            SpiderSpecifiedUrl(url);
-        }
+        //Presence of a spider key for the URL in the global state file indicates the URL has been
+        //spidered and does not need to be redone.  If the key is not present then initiate the spidering
+        boolean spiderNeeded = !Constants.GLOBAL_STATE.hasKey(getSpiderStateKey(url));
+        logger.info("Tested if spidering is needed for {}: {}", url, spiderNeeded);
+        if (spiderNeeded) SpiderSpecifiedUrl(url);
     }
 
+    /**
+     * gets the state key associated with the specified URL that records whether it has already been spidered
+     * @param url the target URL
+     */
+    private String getSpiderStateKey(String url) {
+        return String.format("spider %s", url);
+    }
+
+    /**
+     * gets the state key associated with the specified URL that records whether it has already been
+     * subject to a passive scan
+     * @param url the target URL
+     */
+    private String getPassiveScanStateKey(String url) {
+        return String.format("passive %s", url);
+    }
+
+    /**
+     * Runs a standard spider against a specified URL
+     * @param url the target URL
+     * @throws ClientApiException
+     * @throws InterruptedException
+     */
     private void SpiderSpecifiedUrl(String url) throws ClientApiException, InterruptedException {
 
-        logger.debug("Starting the ZAP spider for {}", url);
+        logger.debug("Initiating standard spider against {}", url);
         ApiResponse resp = zap.spider.scan(url, null, null, null, null);
 
         int progress = 0;
         int progressPollRate = 1000;
 
-        // Get the identifier for the current scan
+        // Get the identifier for the current scan and add to scenario state for progress monitoring
         String scanid = ((ApiResponseElement)resp).getValue();
-        logger.debug("ZAP spider running with scan id {}", scanid);
-        logger.debug("Polling spider progress every {} milliseconds", progressPollRate);
+        logger.debug("Spider running with scan id {}", scanid);
+        logger.debug("Polling progress every {} milliseconds", progressPollRate);
         scenarioState.add("scanid", scanid);
 
         // Poll the status until the spider completes
@@ -70,25 +96,38 @@ public class ScanConfiguration {
             logger.debug("Spider progress {}%", progress);
         }
         logger.debug("Spider complete");
-        scenarioState.add(String.format("spider %s", url), true);
+        scenarioState.add(getSpiderStateKey(url), true);
 
         ApiResponse response = zap.spider.results(scenarioState.getString("scanid"));
         logger.debug("Spider found {} pages", ((ApiResponseList)(response)).getItems().size() );
+
+        waitForPassiveScan(url);
+    }
+
+    /**
+     * Wait for any ongoing passive scan to complete
+     * @param url the target URL
+     */
+    private void waitForPassiveScan(String url) throws ClientApiException {
 
         logger.debug("Waiting for passive scan to complete");
         int scanRemaining = 1;
         while (scanRemaining > 0) {
             int lastpoll = scanRemaining;
-            zap.pscan.recordsToScan(); //Not sure why need this - is in examples, and seems to give better results
+            zap.pscan.recordsToScan(); //Not sure why need this - is in examples, and seems to give more accurate results
             scanRemaining = Integer.parseInt(((ApiResponseElement) zap.pscan.recordsToScan()).getValue());
             if (lastpoll != scanRemaining) logger.debug("{} pages remaining to scan", scanRemaining);
         }
         logger.debug("passive scan complete");
-        scenarioState.add(String.format("passive %s", url), true);
+        scenarioState.add(getPassiveScanStateKey(url), true);
     }
 
+    /**
+     * Retreives the number alerts split int high, medium, low and informational categories
+     * @throws ClientApiException
+     */
     @When("I get the results")
-    public void iGetTheResults() throws ClientApiException {
+    public void iGetTheResultsCount() throws ClientApiException {
         ApiResponseSet alertCountsByRisk = (ApiResponseSet)zap.alert.alertCountsByRisk(null, null);
         
         int high = Integer.parseInt(alertCountsByRisk.getValue("High").toString());
@@ -102,8 +141,13 @@ public class ScanConfiguration {
         scenarioState.add("pscanInformational", informational);
     }
 
+    /**
+     * Asserts that a specific number of alerts of a specific type have been reported
+     * @param count
+     * @param risk
+     */
     @Then("there are/is {int} {word} risk alert(s)")
-    public void thereAreNoHighRiskAlerts(int count, String risk) {
+    public void validateNumberOfAlerts(int count, String risk) {
 
         int alerts;
         switch(risk.toLowerCase()) {
@@ -127,6 +171,12 @@ public class ScanConfiguration {
         Assert.assertEquals(count, alerts);
     }
 
+    /**
+     * Retreives and saves the HTML report with the specified filename
+     * @param filename the sane to use when saving the report
+     * @throws IOException
+     * @throws ClientApiException
+     */
     @And("save the HTML report as {string}")
     public void saveTheHTMLReport(String filename) throws IOException, ClientApiException {
 
@@ -145,7 +195,7 @@ public class ScanConfiguration {
 
 
     /**
-     * Initiates an active scan agains ta specified URL. This involves constructing intentionally malicious
+     * Initiates an active scan against a specified URL. This involves constructing intentionally malicious
      * calls to identified potentially vulnerable pages and recored results.  Note this scan can take a long
      * time to execute.
      *
